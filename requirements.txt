@@ -1,0 +1,7 @@
+fastapi
+elasticsearch==7.10.0
+uvicorn
+python-multipart
+google_auth_oauthlib
+google
+google-api-python-client
