@@ -15,8 +15,8 @@ EXPOSE 8000
 
 # Define environment variable
 ENV NAME World
-ENV VIDEO_MANAGER_INDEX video_index
-ENV PLAYLIST_MANAGER_INDEX playlist_index
+ENV VIDEO_INDEX video_index
+ENV PLAYLIST_INDEX playlist_index
 
 # Run app.py when the container launches
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

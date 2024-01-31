@@ -145,27 +145,69 @@ Download all the data (playlists and videos) as a JSON file.
 
 Represents a playlist in the application.
 
-- **playlist_id** (string): Unique identifier for the playlist.
-- **playlist_description** (string): Description of the playlist.
-- **video_ids** (array of strings): List of video IDs that are part of this playlist.
-- **original_playlist_url** (string, optional): URL of the original playlist (e.g., YouTube playlist). Since it may not be derived from another playlist, it is optional.
-- **original_channel_url** (string, optional): URL of the original owner (e.g., YouTube channel) associated with the playlist. Since it may not have another owner, it is optional.
-- **custom_comments** (string, optional): Custom comments added by users.
-- **likes** (integer, optional): Number of likes the playlist has received.
-- **views** (integer, optional): Number of views for the playlist.
+- **id** (string): Unique identifier for the playlist.
+- **title** (string): Title of the playlist.
+- **original_playlist_url** (string, optional): URL of the original playlist (e.g., YouTube playlist).
+- **original_owner_url** (string, optional): URL of the original owner (e.g., YouTube channel).
+- **description** (string, optional): Description of the playlist.
+- **video_ids** (array of strings, optional): List of video IDs that are part of this playlist.
+- **comments** (array of strings, optional): Comments added by users.
+- **likes** (integer): Number of likes the playlist has received.
+- **views** (integer): Number of views for the playlist.
+
+To create the Elasticsearch mapping for the playlist index, use the following CURL command:
+```bash
+curl -X PUT "localhost:9200/playlist_index" -H 'Content-Type: application/json' -d'
+{
+  "mappings": {
+    "properties": {
+      "id": { "type": "keyword" },
+      "title": { "type": "text" },
+      "original_playlist_url": { "type": "text", "index": false },
+      "original_owner_url": { "type": "text", "index": false },
+      "description": { "type": "text" },
+      "video_ids": { "type": "keyword" },  // Array of video IDs
+      "comments": { "type": "text" },      // Array of comments
+      "likes": { "type": "integer" },
+      "views": { "type": "integer" }
+    }
+  }
+}'
+```
 
 ### Video Document
 
 Represents a video, which can be standalone or part of playlists.
 
-- **video_id** (string): Unique identifier for the video.
-- **video_url** (string): URL where the video can be accessed.
-- **video_description** (string): Description of the video.
-- **original_playlist_url** (string, optional): URL of the original playlist (e.g., YouTube) the video was part of. Since it may not have be originally from a playlist, it is optional.
-- **original_owner_url** (string, optional): URL of the origional owner (e.g., YouTube channel) associated with the video. It is optional.
-- **custom_comments** (string, optional): Custom comments added by users.
-- **likes** (integer, optional): Number of likes the video has received.
-- **views** (integer, optional): Number of views for the video.
+- **id** (string): Unique identifier for the video.
+- **original_playlist_url** (string, optional): URL of the original playlist (e.g., YouTube playlist).
+- **original_owner_url** (string, optional): Original owner URL (e.g., YouTube channel).
+- **comments** (array of strings, optional): Comments added by users.
+- **likes** (integer): Number of likes the video has received.
+- **views** (integer): Number of views for the video.
+- **url** (string): URL where the video can be accessed.
+- **title** (string, optional): Title of the video.
+- **description** (string, optional): Description of the video.
+
+To create the Elasticsearch mapping for the video index, use the following CURL command:
+```bash
+curl -X PUT "localhost:9200/video_index" -H 'Content-Type: application/json' -d'
+{
+  "mappings": {
+    "properties": {
+      "id": { "type": "keyword" },
+      "original_playlist_url": { "type": "text", "index": false },
+      "original_owner_url": { "type": "text", "index": false },
+      "comments": { "type": "text" },      // Array of comments
+      "likes": { "type": "integer" },
+      "views": { "type": "integer" },
+      "url": { "type": "text", "index": false },
+      "title": { "type": "text" },
+      "description": { "type": "text" }
+    }
+  }
+}'
+```
 
 ## Query Language
 
