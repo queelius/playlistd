@@ -1,69 +1,64 @@
 from os import environ
-from elasticsearch.exceptions import NotFoundError
+from datetime import datetime
+from elasticsearch.exceptions import NotFoundError, ElasticsearchException
 from elasticsearch import Elasticsearch
-from fastapi import FastAPI, HTTPException, Path, Query, Body, status
+from fastapi import FastAPI, HTTPException, Path, Query, Body
 from typing import List, Optional
 from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
-from typing import Union, List
+from data_model import index, initialize_playlist_index
 
 app = FastAPI()
 es = Elasticsearch("http://elasticsearch:9200")
-
-class Playlist(BaseModel):
-    title: str # title of the playlist
-    original_playlist_url: Optional[str] = None # original playlist URL (e.g., YouTube playlist)
-    original_owner_url: Optional[str] = None # original owner URL (e.g., YouTube channel)
-    description: Optional[str] = None # description of the playlist
-    video_ids: Optional[List[str]] = None # list of video IDs in the playlist
-    comments: Optional[str] = None # additional comments added
-    likes: int = 0
-    views: int = 0
+initialize_playlist_index(es)
 
 class Video(BaseModel):
-    original_playlist_url: Optional[str] = None # original playlist URL (e.g., YouTube playlist)
-    original_owner_url: Optional[str] = None # original owner URL (e.g., YouTube channel)
-    comments: Optional[str] = None # additional comments added
+    date_added: Optional[datetime] = None # Date the video was added to the index.
+    date_published: Optional[datetime] = None # Date the video was published.
+    date_updated: Optional[datetime] = None # Date the video was last updated.
     likes: int = 0 # Number of likes the video has received.
     views: int = 0 # Number of views for the video.
     url: str # URL where the video can be accessed.
     title: Optional[str] = None # Title of the video.
     description: Optional[str] = None
 
+class Playlist(BaseModel):
+    title: str # title of the playlist
+    date_added: Optional[datetime] = None # date the playlist was added to the index
+    date_updated: Optional[datetime] = None # date the playlist was last updated
+    original_playlist_published: Optional[datetime] = None # date the original playlist was published
+    original_playlist_url: Optional[str] = None # original playlist URL (e.g., YouTube playlist)
+    original_owner_url: Optional[str] = None # original owner URL (e.g., YouTube channel)
+    description: Optional[str] = None # description of the playlist
+    videos: Optional[Video] = None # list of videos in the playlist
+    likes: int = 0
+    views: int = 0
+
 class VideoResponse(Video):
-    id: str  # Elasticsearch _id
+    id: str # Elasticsearch _id
     score: Optional[float] = None # Elasticsearch score
 
 class PlaylistResponse(Playlist):
     id: str  # Elasticsearch _id
     score: Optional[float] = None # Elasticsearch score
 
-class DetailedPlaylistResponse(PlaylistResponse):
-    videos: List[Video] = []
-
 class MutationResponse(BaseModel):
     message: str
     id: str
 
-def find(index: str, id: str):
-    try:
-        return es.get(index=index, id=id)['_source']
-    except NotFoundError:
-        raise HTTPException(status_code=404, detail=f"id={id} in {index} not found")
-    except ElasticsearchException as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def search_util(index: str, q: Optional[str] = None, start: int = 0, size: int = 10, fields: Optional[List[str]] = None):
+def search_pl(query: Optional[str] = None,
+              start: int = 0,
+              size: int = 10,
+              fields: Optional[List[str]] = None):
     try:
         body = {
             "from": start,
             "size": size,
             "query": {
                 "match_all": {}
-            } if not q else {
+            } if not query else {
                 "multi_match": {
-                    "query": q,
+                    "query": query,
                     "fields": fields,
                     "type": "best_fields"
                 }
@@ -73,98 +68,171 @@ def search_util(index: str, q: Optional[str] = None, start: int = 0, size: int =
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def search_pl_vid(playlist_id: str,
+                  query: Optional[str] = None,
+                  start: int = 0,
+                  size: int = 10,
+                  fields: Optional[List[str]] = None):
+    try:
+        if query is None:
+            return es.get(index=index, id=playlist_id)["videos"]
+        body = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {
+                            "match": {
+                                "playlist_id": playlist_id
+                            }
+                        },
+                        {
+                            "nested": {
+                                "path": "videos",
+                                "query": {
+                                    "match": {
+                                        "videos.title": query
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+        return es.search(index=index, body=body)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+######################
+# REST API Endpoints #
+######################
+
 @app.get("/", include_in_schema=False)
-def read_root():
+def root():
     return RedirectResponse(url="/redoc")
 
-# Managing Playlists
+#############
+# Playlists #
+#############
 
 @app.get("/playlists/",
          response_model=List[PlaylistResponse],
-         summary="Search playlists",
-         description="List all playlists or search for playlists")
-def get_playlists(q: Optional[str] = Query(None, description="Search terms"),
+         summary="Search playlists")
+def get_playlists(query: Optional[str] = Query(None, description="Keywords"),
                   start: int = Query(0, alias="start"),
                   size: int = Query(10, alias="size"),
-                  fields: Optional[List[str]] = Query(["title", "description", "comments"], alias="fields")):
+                  fields: Optional[List[str]] = Query(["title", "description"], alias="fields")):
 
-    resp = search_util(environ["PLAYLIST_INDEX"], q, start, size, fields)
-    return [PlaylistResponse(id=hit["_id"],
-                             score=hit["_score"],
+    resp = search_pl(query, start, size, fields)
+    return [PlaylistResponse(id=hit["_id"], score=hit["_score"],
                              **hit["_source"]) for hit in resp['hits']['hits']]
 
-@app.post("/playlists",
-          summary="Create a playlist",
-          description="Create a playlist")
+@app.post("/playlists/",
+          summary="Create a playlist")
 def create_playlist(playlist: Playlist):
-    return process(es.index(
-        index=environ["PLAYLIST_INDEX"],
-        body=playlist.dict()))
+    try:
+        return es.index(index=index, body=playlist.dict())
+    except ElasticsearchException as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/playlists/{id}",
-         summary="Get a playlist",
-         description="Get the details of a playlist")
-def get_playlist(id: str):
-    return find(environ["PLAYLIST_INDEX"], id)
+# response_model=PlaylistResponse
+@app.get("/playlists/{id}/",
+         summary="Get a playlist")
+def get_playlist(id: str = Path(..., description="The ID of the playlist to get")):
+    try:
+        return es.get(index=index, id=id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail=f"playlist {id=} not found")
+    except ElasticsearchException as e:
+        raise HTTPException(status_code=500, detail=str(e))
   
 @app.put("/playlists/{id}",
-         summary="Update a playlist",
-         description="Update the details of a playlist")
-def update_playlist(id: str, playlist: Playlist):
-    return process(es.update(index=environ["PLAYLIST_INDEX"],
-        id=id, body=playlist.dict()))
+         summary="Update a playlist")
+def update_playlist(playlist: Playlist,
+                    id: str = Path(..., description="The ID of the playlist to update")):
+    try:
+        return es.update(index=index, id=id, body=playlist.dict())
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail=f"playlist {id=} not found")
+    except ElasticsearchException as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/playlists/{id}",
-            summary="Delete a playlist",
-            description="Delete a playlist from the playlist index")
-def delete_playlist(id: str):
+            summary="Delete a playlist")
+def delete_playlist(id: str = Path(..., description="The ID of the playlist to delete")):
     try:
-        return es.delete(index=environ["PLAYLIST_INDEX"], id=id)
+        return es.delete(index=index, id=id)
     except NotFoundError:
-        raise HTTPException(status_code=404, detail=f"id={id} in {environ['PLAYLIST_INDEX']} not found")
+        raise HTTPException(status_code=404, detail=f"playlist {id=} not found")
     except ElasticsearchException as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-# Managing Videos
-@app.get("/videos/",
+
+########################
+# Videos in a Playlist #
+########################
+    
+@app.get("/playlists/{id}/videos/",
          response_model=List[VideoResponse],
-         summary="Search videos",
-         description="List all videos or search for videos")
-def get_videos(q: Optional[str] = Query(None, description="Search terms"),
+         summary="Search videos in a playlist")
+def get_videos(query: Optional[str] = Query(None, description="Keywords"),
                start: int = Query(0, alias="start"),
                size: int = Query(10, alias="size"),
-               fields: Optional[List[str]] = Query(["title", "description", "comments"], alias="fields")):
-    resp = search_util(environ["VIDEO_INDEX"], q, start, size, fields)
-    return [VideoResponse(id=hit["_id"],
-                          score=hit["_score"],
+               fields: Optional[List[str]] = Query(["title", "description"], alias="fields")):
+    resp = search_pl_vid(query, start, size, fields)
+    return [VideoResponse(id=hit["_id"], score=hit["_score"],
                           **hit["_source"]) for hit in resp['hits']['hits']]
-@app.post("/videos/",
-          summary="Add a video",
-          description="Add a video to the video index")
+
+@app.post("/playlist/{id}/videos/",
+          summary="Add a video to a playlist")
 def add_video(video: Video):
-    resp = es.index(index=environ["VIDEO_INDEX"], body=video.dict())
-    return MutationResponse(message="Added video", id=resp['_id'])
-
-@app.get("/videos/{id}",
-         summary="Get a video",
-         description="Get the details of a video",
+    try:
+        return es.index(index=index, body=video.dict())
+    except ElasticsearchException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/playlist/{playlist_id}/videos/{video_id}",
+         summary="Get details of a video in a playlist",
          response_model=VideoResponse)
-def get_video(id: str = Path(..., description="The ID of the video to get")):
-    return VideoResponse(id=id, **find(environ["VIDEO_INDEX"], id))
+def get_video(playlist_id: str = Path(..., description="The ID of the video to get"),
+              video_id: str = Path(..., description="The ID of the video to get")):
+    try:
+        # must look at the nested videos field
+        playlist = es.get(index=index, id=playlist_id)
+        for video in playlist["_source"]["videos"]:
+            if video["_id"] == video_id:
+                return VideoResponse(id=video_id, **video)
+        raise HTTPException(status_code=404, detail=f"video {video_id=} not found")
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail=f"playlist {playlist_id=} not found")
+    except ElasticsearchException as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/videos/{id}",
-         summary="Update a video",
-         description="Update the details of a video")
-def update_video(id: str, video: Video):
-    return es.update(index=environ["VIDEO_INDEX"], id=id, body=video.dict())
+@app.put("/playlists/{playlist_id}/videos/{video_id}",
+         summary="Update a video in a playlist")
+def update_video(video: Video,
+                 playlist_id: str = Path(..., description="The ID of the playlist to update"),
+                 video_id: str = Path(..., description="The ID of the video to update")):
+    try:
+        # must look at the nested 'videos' field for the given playlist
+        playlist = es.get(index=index, id=playlist_id)
+        for i, v in enumerate(playlist["_source"]["videos"]):
+            if v["_id"] == video_id:
+                playlist["_source"]["videos"][i] = video.dict()
+                return es.update(index=index, id=playlist_id, body=playlist["_source"])
+        raise HTTPException(status_code=404, detail=f"video {video_id=} not found")
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail=f"video {id=} not found")
+    except ElasticsearchException as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/videos/{id}", summary="Delete a video", description="Delete a video from the video index")
+@app.delete("/playlists/{playlist_id}/videos/{id}",
+            summary="Delete a video in a playlist")
 def delete_video(id: str):
     try:
-        resp = es.delete(index=environ["VIDEO_INDEX"], id=id)
-        return MutationResponse(result=resp['result'], id=resp['_id'])
+        return es.delete(index=index, id=id)
     except NotFoundError:
-        raise HTTPException(status_code=404, detail=f"id={id} in {environ['VIDEO_INDEX']} not found")
+        raise HTTPException(status_code=404, detail=f"video {id=} not found")
     except ElasticsearchException as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -189,23 +257,3 @@ def import_youtube_video(youtube_video_id: str = Body(...)):
 def import_video_link(video_url: str = Body(...)):
     # Implement logic for importing a video from a link
     return {"message": "Imported video from URL: {}".format(video_url)}
-
-
-# Advanced Search that exposes the Elasticsearch DSL
-
-@app.post("/search",
-          summary="Advanced search",
-          description="Advanced search using the Elasticsearch DSL",
-          response_model=Union[List[PlaylistResponse], List[VideoResponse]])
-def search(body: dict = Body(...), videos: bool = Body(False)):
-    try:
-        index = environ["VIDEO_INDEX"] if videos else environ["PLAYLIST_INDEX"]
-        resp = es.search(index=index, body=body)
-        return [PlaylistResponse(id=hit["_id"],
-                                 score=hit["_score"],
-                                 **hit["_source"]) if not videos else
-                VideoResponse(id=hit["_id"],
-                              score=hit["_score"],
-                              **hit["_source"]) for hit in resp['hits']['hits']]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

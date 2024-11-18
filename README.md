@@ -209,6 +209,7 @@ curl -X PUT "localhost:9200/video_index" -H 'Content-Type: application/json' -d'
 }'
 ```
 
+
 ## Query Language
 
 The search functionality supports full-text search on fields, like video descriptions. It employs a ranking algorithm (like BM25) to order the results by relevance. If no query is provided, it returns a default set of videos, which can be sorted by popularity, recency, or other criteria.

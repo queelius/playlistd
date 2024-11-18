@@ -1,44 +1,79 @@
+from os import environ
+
 playlist_mapping = {
-    "mappings": {
+  "mappings": {
+    "properties": {
+      "title": {
+        "type": "text"
+      },
+      "date_added": {
+        "type": "date"
+      },
+      "date_updated": {
+        "type": "date"
+      },
+      "original_playlist_published": {
+        "type": "date"
+      },
+      "original_playlist_url": {
+        "type": "text"
+      },
+      "original_owner_url": {
+        "type": "text"
+      },
+      "description": {
+        "type": "text"
+      },
+      "videos": {
+        "type": "nested",
         "properties": {
-            "title": { "type": "text" },
-            "original_playlist_url": { "type": "text", "index": False },
-            "original_owner_url": { "type": "text", "index": False },
-            "description": { "type": "text" },
-            "video_ids": { "type": "keyword" },
-            "comments": { "type": "text" },
-            "likes": { "type": "integer" },
-            "views": { "type": "integer" }
+          "comments": {
+            "type": "text"
+          },
+          "date_added": {
+            "type": "date"
+          },
+          "date_published": {
+            "type": "date"
+          },
+          "date_updated": {
+            "type": "date"
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "views": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "text"
+          },
+          "title": {
+            "type": "text"
+          },
+          "description": {
+            "type": "text"
+          }
         }
+      },
+      "comments": {
+        "type": "text"
+      },
+      "likes": {
+        "type": "integer"
+      },
+      "views": {
+        "type": "integer"
+      }
     }
+  }
 }
 
-video_mapping = {
-    "mappings": {
-        "properties": {
-            "original_playlist_url": { "type": "text", "index": False },
-            "original_owner_url": { "type": "text", "index": False },
-            "comments": { "type": "text" },
-            "likes": { "type": "integer" },
-            "views": { "type": "integer" },
-            "url": { "type": "text", "index": False },
-            "title": { "type": "text" },
-            "description": { "type": "text" }
-        }
-    }
-}
+index = environ['PLAYLIST_INDEX']
 
-
-#def initialize_indexes(es: Elasticsearch):
-#    def initialize_mapping(index_name, mapping):
-#        try:
-#            if not es.indices.exists(index=index_name):
-#                es.indices.create(index=index_name, body=mapping)
-#                print(f"Created index: {index_name}")
-#            else:
-#                print(f"Index {index_name} already exists")
-#        except exceptions.ElasticsearchException as e:
-#            print(f"Error creating index {index_name}: {str(e)}")##
-
-#    initialize_mapping(environ['VIDEO_INDEX'], video_mapping)
-#    initialize_mapping(environ['PLAYLIST_INDEX'], playlist_mapping)
+def initialize_playlist_index(es):
+    if not es.indices.exists(index=index):
+        es.indices.create(index=index, body=playlist_mapping)
+        print(f"Created playlist index: {index}")
+    else:
+        print(f"Index {index} already exists")

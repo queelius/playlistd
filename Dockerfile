@@ -11,12 +11,10 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Make port 8000 available to the world outside this container
-EXPOSE 8000
+EXPOSE 9000
 
 # Define environment variable
-ENV NAME World
-ENV VIDEO_INDEX video_index
 ENV PLAYLIST_INDEX playlist_index
 
 # Run app.py when the container launches
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "9000", "--reload"]
